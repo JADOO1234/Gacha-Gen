@@ -6,11 +6,13 @@ import gzip
 import zlib
 import threading
 import time
+import traceback
 import urllib3
 import requests as http_requests
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query, Form
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Query, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from Crypto.Cipher import AES
@@ -195,11 +197,12 @@ def send_request(endpoint: str, body_bytes: bytes, headers: Dict, hosts: List[st
         headers_copy["Content-Length"] = str(len(body_bytes))
         try:
             resp = http_requests.post(url, headers=headers_copy, data=body_bytes,
-                                      timeout=10, verify=False)
+                                      timeout=15, verify=False)
             raw = decompress_response(resp)
             decoded = decode_protobuf(raw) if resp.status_code == 200 else None
             return resp.status_code, decoded, raw
-        except Exception:
+        except Exception as e:
+            print(f"Request error to {host}: {e}")
             continue
     return None, None, None
 
@@ -238,7 +241,15 @@ async def lifespan(app: FastAPI):
     thread.start()
     yield
 
-app = FastAPI(title="Free Fire Gacha Payload Generator", lifespan=lifespan)
+app = FastAPI(title="Free Fire Gacha Tool", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.post("/generate", response_model=GenerateResponse)
 async def generate_payloads(jwt: str = Query(..., description="JWT token from Free Fire")):
@@ -391,228 +402,229 @@ async def spin_events(jwt: str = Query(..., description="JWT token from Free Fir
 async def frontend():
     html_content = """
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Free Fire Gacha Tool</title>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Free Fire Gacha Tool - Payload Generator & Spin Tester</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        h1 { color: #333; }
-        .container {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: bold;
-        }
-        input[type="text"] {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 12px;
-            margin-bottom: 15px;
-        }
-        button {
-            background: #007bff;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        button:hover { background: #0056b3; }
-        .result {
-            margin-top: 20px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 4px;
-            overflow-x: auto;
-        }
-        pre {
-            background: #2d2d2d;
-            color: #f8f8f2;
-            padding: 15px;
-            border-radius: 4px;
-            overflow-x: auto;
-            font-size: 12px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        th, td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: left;
-        }
-        th { background: #f2f2f2; }
-        .free { color: green; font-weight: bold; }
-        .paid { color: red; font-weight: bold; }
-        .tab {
-            overflow: hidden;
-            border-bottom: 1px solid #ccc;
-            margin-bottom: 20px;
-        }
-        .tab button {
-            background-color: inherit;
-            float: left;
-            border: none;
-            outline: none;
-            cursor: pointer;
-            padding: 14px 16px;
-            transition: 0.3s;
-            color: #333;
-        }
-        .tab button:hover { background-color: #ddd; }
-        .tab button.active { background-color: #007bff; color: white; }
-        .tabcontent {
-            display: none;
-            padding: 20px 0;
-        }
+        pre { white-space: pre-wrap; word-wrap: break-word; }
+        .debug-log { font-family: 'Courier New', monospace; font-size: 12px; background: #1e1e2f; color: #f0f0f0; padding: 12px; border-radius: 8px; max-height: 300px; overflow-y: auto; }
+        .copy-btn { cursor: pointer; transition: all 0.2s; }
+        .copy-btn:hover { transform: scale(1.05); }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+        .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #3b82f6; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
-<body>
-    <h1>🎰 Free Fire Gacha Tool</h1>
-    <div class="container">
-        <label>JWT Token:</label>
-        <input type="text" id="jwt" placeholder="Paste your JWT token here...">
-        
-        <div class="tab">
-            <button class="tablinks" onclick="openTab(event, 'Generate')" id="defaultOpen">Generate Payloads (No Spin)</button>
-            <button class="tablinks" onclick="openTab(event, 'Spin')">Spin & Test Free/Paid</button>
-        </div>
+<body class="bg-gray-100 font-sans">
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <div class="bg-white rounded-2xl shadow-xl overflow-hidden">
+            <div class="bg-gradient-to-r from-blue-600 to-purple-600 p-6 text-white">
+                <h1 class="text-3xl font-bold flex items-center gap-3">
+                    <i class="fas fa-gamepad"></i> Free Fire Gacha Tool
+                </h1>
+                <p class="mt-2 opacity-90">Generate encrypted PurchaseGacha payloads or test spins (free/paid)</p>
+            </div>
 
-        <div id="Generate" class="tabcontent">
-            <button onclick="generatePayloads()">Generate Encrypted Payloads</button>
-        </div>
-        <div id="Spin" class="tabcontent">
-            <button onclick="spinEvents()">Perform Spins (Will use your spins!)</button>
-        </div>
+            <div class="p-6">
+                <div class="mb-6">
+                    <label class="block text-gray-700 font-semibold mb-2">JWT Token</label>
+                    <textarea id="jwt" rows="3" class="w-full border border-gray-300 rounded-lg p-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Paste your JWT token here..."></textarea>
+                    <p class="text-xs text-gray-500 mt-1">Token is never stored, only used for API calls.</p>
+                </div>
 
-        <div id="result" class="result" style="display:none;">
-            <h3>Result:</h3>
-            <div id="output"></div>
+                <div class="flex flex-wrap gap-4 mb-6 border-b pb-2">
+                    <button id="tabGenerate" class="tab-btn py-2 px-4 font-semibold text-gray-600 hover:text-blue-600 transition">📦 Generate Payloads (No spin)</button>
+                    <button id="tabSpin" class="tab-btn py-2 px-4 font-semibold text-gray-600 hover:text-blue-600 transition">🎰 Spin & Test (Uses spins!)</button>
+                    <button id="tabDebug" class="tab-btn py-2 px-4 font-semibold text-gray-600 hover:text-blue-600 transition">🐞 Debug Console</button>
+                </div>
+
+                <div id="panelGenerate" class="panel">
+                    <button id="btnGenerate" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg transition flex items-center gap-2">
+                        <i class="fas fa-key"></i> Generate Encrypted Payloads
+                    </button>
+                </div>
+
+                <div id="panelSpin" class="panel hidden">
+                    <button id="btnSpin" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg transition flex items-center gap-2">
+                        <i class="fas fa-dice-d6"></i> Perform Spins (WARNING: consumes spins!)
+                    </button>
+                    <p class="text-xs text-red-500 mt-2"><i class="fas fa-exclamation-triangle"></i> This will actually send PurchaseGacha requests to the game server. Use at your own risk.</p>
+                </div>
+
+                <div id="panelDebug" class="panel hidden">
+                    <div class="bg-gray-900 rounded-lg p-3">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-white font-mono text-sm"><i class="fas fa-terminal"></i> Live Debug Log</span>
+                            <button id="clearDebug" class="text-gray-400 hover:text-white text-sm">Clear</button>
+                        </div>
+                        <div id="debugLog" class="debug-log"></div>
+                    </div>
+                </div>
+
+                <div id="resultArea" class="mt-8 hidden">
+                    <div class="border-t pt-4">
+                        <h2 class="text-xl font-bold mb-3 flex items-center gap-2"><i class="fas fa-chart-line"></i> Results</h2>
+                        <div id="resultContent" class="overflow-x-auto"></div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
-        function openTab(evt, tabName) {
-            var i, tabcontent, tablinks;
-            tabcontent = document.getElementsByClassName("tabcontent");
-            for (i = 0; i < tabcontent.length; i++) {
-                tabcontent[i].style.display = "none";
-            }
-            tablinks = document.getElementsByClassName("tablinks");
-            for (i = 0; i < tablinks.length; i++) {
-                tablinks[i].className = tablinks[i].className.replace(" active", "");
-            }
-            document.getElementById(tabName).style.display = "block";
-            evt.currentTarget.className += " active";
-        }
+        let currentJwt = '';
+        const debugLogDiv = document.getElementById('debugLog');
         
-        document.getElementById("defaultOpen").click();
+        function addDebug(msg, type='info') {
+            const time = new Date().toLocaleTimeString();
+            const colors = { info: '#a0a0ff', error: '#ff8888', success: '#88ff88', warning: '#ffaa44' };
+            const color = colors[type] || '#f0f0f0';
+            const line = document.createElement('div');
+            line.innerHTML = `<span style="color:#aaa;">[${time}]</span> <span style="color:${color};">${msg}</span>`;
+            debugLogDiv.appendChild(line);
+            debugLogDiv.scrollTop = debugLogDiv.scrollHeight;
+        }
+
+        function showLoading(btnId, loading=true) {
+            const btn = document.getElementById(btnId);
+            if(loading) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner"></span> Loading...';
+            } else {
+                btn.disabled = false;
+                if(btnId === 'btnGenerate') btn.innerHTML = '<i class="fas fa-key"></i> Generate Encrypted Payloads';
+                else btn.innerHTML = '<i class="fas fa-dice-d6"></i> Perform Spins (WARNING: consumes spins!)';
+            }
+        }
+
+        async function callAPI(endpoint, jwt) {
+            addDebug(`Calling ${endpoint} with JWT (length ${jwt.length})`, 'info');
+            const url = `/${endpoint}?jwt=${encodeURIComponent(jwt)}`;
+            try {
+                const response = await fetch(url, { method: 'POST', headers: { 'Accept': 'application/json' } });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.detail || `HTTP ${response.status}`);
+                }
+                addDebug(`✅ ${endpoint} succeeded`, 'success');
+                return { success: true, data };
+            } catch (err) {
+                addDebug(`❌ ${endpoint} failed: ${err.message}`, 'error');
+                return { success: false, error: err.message };
+            }
+        }
 
         async function generatePayloads() {
             const jwt = document.getElementById('jwt').value.trim();
-            if (!jwt) {
-                alert('Please enter JWT token');
-                return;
+            if (!jwt) { alert('Please enter JWT token'); return; }
+            currentJwt = jwt;
+            showLoading('btnGenerate', true);
+            document.getElementById('resultArea').classList.remove('hidden');
+            document.getElementById('resultContent').innerHTML = '<div class="text-center py-8"><span class="spinner"></span> Generating payloads...</div>';
+            const res = await callAPI('generate', jwt);
+            if (res.success) {
+                displayGenerateResults(res.data);
+                addDebug(`Generated ${res.data.events.length} events`, 'success');
+            } else {
+                document.getElementById('resultContent').innerHTML = `<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">Error: ${res.error}</div>`;
             }
-            showLoading();
-            try {
-                const response = await fetch(`/generate?jwt=${encodeURIComponent(jwt)}`, { method: 'POST' });
-                const data = await response.json();
-                if (response.ok) {
-                    displayResult(data, 'generate');
-                } else {
-                    displayError(data.detail || 'Request failed');
-                }
-            } catch (err) {
-                displayError(err.message);
-            }
+            showLoading('btnGenerate', false);
         }
 
         async function spinEvents() {
             const jwt = document.getElementById('jwt').value.trim();
-            if (!jwt) {
-                alert('Please enter JWT token');
-                return;
+            if (!jwt) { alert('Please enter JWT token'); return; }
+            if (!confirm('⚠️ WARNING: This will actually use your spins! Are you 100% sure?')) return;
+            currentJwt = jwt;
+            showLoading('btnSpin', true);
+            document.getElementById('resultArea').classList.remove('hidden');
+            document.getElementById('resultContent').innerHTML = '<div class="text-center py-8"><span class="spinner"></span> Sending spin requests... (this may take a moment)</div>';
+            const res = await callAPI('spin', jwt);
+            if (res.success) {
+                displaySpinResults(res.data);
+                addDebug(`Spin test completed. Free events: ${res.data.filter(e=>e.is_free).length}/${res.data.length}`, 'success');
+            } else {
+                document.getElementById('resultContent').innerHTML = `<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">Error: ${res.error}</div>`;
             }
-            if (!confirm('⚠️ This will actually use your spins! Are you sure?')) return;
-            showLoading();
-            try {
-                const response = await fetch(`/spin?jwt=${encodeURIComponent(jwt)}`, { method: 'POST' });
-                const data = await response.json();
-                if (response.ok) {
-                    displayResult(data, 'spin');
-                } else {
-                    displayError(data.detail || 'Request failed');
-                }
-            } catch (err) {
-                displayError(err.message);
-            }
+            showLoading('btnSpin', false);
         }
 
-        function showLoading() {
-            const resultDiv = document.getElementById('result');
-            const outputDiv = document.getElementById('output');
-            resultDiv.style.display = 'block';
-            outputDiv.innerHTML = '<p>Loading...</p>';
-        }
-
-        function displayError(msg) {
-            const outputDiv = document.getElementById('output');
-            outputDiv.innerHTML = `<div style="color:red;">Error: ${msg}</div>`;
-        }
-
-        function displayResult(data, type) {
-            const outputDiv = document.getElementById('output');
-            if (type === 'generate') {
-                let html = `<p><strong>Region:</strong> ${data.region}</p>`;
-                html += `<table><tr><th>Event ID</th><th>Event Name</th><th>Encrypted Payload (hex)</th><th>Rare Items</th></tr>`;
-                for (const ev of data.events) {
-                    html += `<tr>
-                        <td>${ev.event_id}</td>
-                        <td>${ev.event_name}</td>
-                        <td><code style="font-size:10px;">${ev.encrypted_hex}</code></td>
-                        <td>${ev.rare_items.join('<br>')}</td>
-                    </tr>`;
-                }
-                html += `</table>`;
-                outputDiv.innerHTML = html;
-            } else if (type === 'spin') {
-                let html = `<table><tr><th>Event ID</th><th>Event Name</th><th>Status</th><th>Free/Paid</th><th>Encrypted Payload</th></tr>`;
-                for (const ev of data) {
-                    const statusClass = ev.is_free ? 'free' : 'paid';
-                    const statusText = ev.is_free ? 'FREE SPIN' : `PAID (HTTP ${ev.status_code})`;
-                    html += `<tr>
-                        <td>${ev.event_id}</td>
-                        <td>${ev.event_name}</td>
-                        <td>${ev.status_code}</td>
-                        <td class="${statusClass}">${statusText}</td>
-                        <td><code style="font-size:10px;">${ev.encrypted_hex}</code></td>
-                    </tr>`;
-                }
-                html += `</table>`;
-                if (data.length === 0) html = '<p>No events found.</p>';
-                outputDiv.innerHTML = html;
+        function displayGenerateResults(data) {
+            let html = `<p class="mb-2"><strong>Region:</strong> ${data.region}</p>`;
+            html += `<div class="overflow-x-auto"><table class="min-w-full bg-white border border-gray-200 rounded-lg">
+                <thead class="bg-gray-100"><tr>
+                    <th class="px-4 py-2 border">Event ID</th><th class="px-4 py-2 border">Event Name</th><th class="px-4 py-2 border">Encrypted Payload (hex)</th><th class="px-4 py-2 border">Rare Items (Top 3)</th>
+                </tr></thead><tbody>`;
+            for (const ev of data.events) {
+                html += `<tr class="border-b">
+                    <td class="px-4 py-2">${ev.event_id}</td>
+                    <td class="px-4 py-2">${escapeHtml(ev.event_name)}</td>
+                    <td class="px-4 py-2"><code class="text-xs bg-gray-100 p-1 rounded block break-all">${ev.encrypted_hex}</code><button onclick="copyToClipboard('${ev.encrypted_hex}')" class="text-blue-500 text-xs mt-1"><i class="far fa-copy"></i> Copy</button></td>
+                    <td class="px-4 py-2">${ev.rare_items.map(i=>escapeHtml(i)).join('<br>')}</td>
+                </tr>`;
             }
+            html += `</tbody></table></div>`;
+            document.getElementById('resultContent').innerHTML = html;
         }
+
+        function displaySpinResults(data) {
+            let html = `<div class="overflow-x-auto"><table class="min-w-full bg-white border border-gray-200 rounded-lg">
+                <thead class="bg-gray-100"><tr>
+                    <th class="px-4 py-2 border">Event ID</th><th class="px-4 py-2 border">Event Name</th><th class="px-4 py-2 border">HTTP Status</th><th class="px-4 py-2 border">Result</th><th class="px-4 py-2 border">Encrypted Payload</th>
+                </tr></thead><tbody>`;
+            for (const ev of data) {
+                const statusClass = ev.is_free ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
+                const statusText = ev.is_free ? 'FREE SPIN' : `PAID (${ev.status_code})`;
+                html += `<tr class="border-b">
+                    <td class="px-4 py-2">${ev.event_id}</td>
+                    <td class="px-4 py-2">${escapeHtml(ev.event_name)}</td>
+                    <td class="px-4 py-2">${ev.status_code}</td>
+                    <td class="px-4 py-2 ${statusClass}">${statusText}</td>
+                    <td class="px-4 py-2"><code class="text-xs bg-gray-100 p-1 rounded block break-all">${ev.encrypted_hex}</code><button onclick="copyToClipboard('${ev.encrypted_hex}')" class="text-blue-500 text-xs mt-1"><i class="far fa-copy"></i> Copy</button></td>
+                </tr>`;
+            }
+            html += `</tbody></table></div>`;
+            document.getElementById('resultContent').innerHTML = html;
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                addDebug('Copied to clipboard', 'success');
+            }).catch(() => alert('Failed to copy'));
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/[&<>]/g, function(m) {
+                if(m === '&') return '&amp;';
+                if(m === '<') return '&lt;';
+                if(m === '>') return '&gt;';
+                return m;
+            }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
+                return c;
+            });
+        }
+
+        // Tab switching
+        const tabs = ['Generate', 'Spin', 'Debug'];
+        function activateTab(tab) {
+            document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
+            document.getElementById(`panel${tab}`).classList.remove('hidden');
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('tab-active', 'text-blue-600'));
+            const activeBtn = tab === 'Generate' ? document.getElementById('tabGenerate') : (tab === 'Spin' ? document.getElementById('tabSpin') : document.getElementById('tabDebug'));
+            activeBtn.classList.add('tab-active', 'text-blue-600');
+        }
+        document.getElementById('tabGenerate').onclick = () => activateTab('Generate');
+        document.getElementById('tabSpin').onclick = () => activateTab('Spin');
+        document.getElementById('tabDebug').onclick = () => activateTab('Debug');
+        document.getElementById('btnGenerate').onclick = generatePayloads;
+        document.getElementById('btnSpin').onclick = spinEvents;
+        document.getElementById('clearDebug').onclick = () => { debugLogDiv.innerHTML = ''; addDebug('Debug log cleared', 'info'); };
+        
+        addDebug('Ready. Enter JWT and choose an action.', 'success');
     </script>
 </body>
 </html>
