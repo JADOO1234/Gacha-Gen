@@ -398,10 +398,13 @@ async def spin_events(jwt: str = Query(..., description="JWT token from Free Fir
 
     return results
 
+def sanitize_html(html: str) -> str:
+    """Remove any invalid Unicode surrogate characters."""
+    return html.encode('utf-8', errors='ignore').decode('utf-8')
+
 @app.get("/", response_class=HTMLResponse)
 async def frontend():
-    html_content = """
-<!DOCTYPE html>
+    html_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -437,9 +440,9 @@ async def frontend():
                 </div>
 
                 <div class="flex flex-wrap gap-4 mb-6 border-b pb-2">
-                    <button id="tabGenerate" class="tab-btn py-2 px-4 font-semibold text-gray-600 hover:text-blue-600 transition">📦 Generate Payloads (No spin)</button>
-                    <button id="tabSpin" class="tab-btn py-2 px-4 font-semibold text-gray-600 hover:text-blue-600 transition">🎰 Spin & Test (Uses spins!)</button>
-                    <button id="tabDebug" class="tab-btn py-2 px-4 font-semibold text-gray-600 hover:text-blue-600 transition">🐞 Debug Console</button>
+                    <button id="tabGenerate" class="tab-btn py-2 px-4 font-semibold text-gray-600 hover:text-blue-600 transition"><i class="fas fa-box"></i> Generate Payloads (No spin)</button>
+                    <button id="tabSpin" class="tab-btn py-2 px-4 font-semibold text-gray-600 hover:text-blue-600 transition"><i class="fas fa-dice-d6"></i> Spin & Test (Uses spins!)</button>
+                    <button id="tabDebug" class="tab-btn py-2 px-4 font-semibold text-gray-600 hover:text-blue-600 transition"><i class="fas fa-bug"></i> Debug Console</button>
                 </div>
 
                 <div id="panelGenerate" class="panel">
@@ -510,10 +513,10 @@ async def frontend():
                 if (!response.ok) {
                     throw new Error(data.detail || `HTTP ${response.status}`);
                 }
-                addDebug(`✅ ${endpoint} succeeded`, 'success');
+                addDebug(`[OK] ${endpoint} succeeded`, 'success');
                 return { success: true, data };
             } catch (err) {
-                addDebug(`❌ ${endpoint} failed: ${err.message}`, 'error');
+                addDebug(`[FAIL] ${endpoint} failed: ${err.message}`, 'error');
                 return { success: false, error: err.message };
             }
         }
@@ -538,7 +541,7 @@ async def frontend():
         async function spinEvents() {
             const jwt = document.getElementById('jwt').value.trim();
             if (!jwt) { alert('Please enter JWT token'); return; }
-            if (!confirm('⚠️ WARNING: This will actually use your spins! Are you 100% sure?')) return;
+            if (!confirm('WARNING: This will actually use your spins! Are you 100% sure?')) return;
             currentJwt = jwt;
             showLoading('btnSpin', true);
             document.getElementById('resultArea').classList.remove('hidden');
@@ -603,8 +606,6 @@ async def frontend():
                 if(m === '<') return '&lt;';
                 if(m === '>') return '&gt;';
                 return m;
-            }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
-                return c;
             });
         }
 
@@ -629,7 +630,9 @@ async def frontend():
 </body>
 </html>
     """
-    return HTMLResponse(content=html_content)
+    # Sanitize the HTML to remove any invalid surrogate characters
+    clean_html = sanitize_html(html_content)
+    return HTMLResponse(content=clean_html, media_type="text/html; charset=utf-8")
 
 @app.get("/ping")
 async def ping():
