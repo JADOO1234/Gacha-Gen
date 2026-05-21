@@ -6,13 +6,15 @@ import gzip
 import zlib
 import threading
 import time
+import urllib3
 import requests as http_requests
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from Crypto.Cipher import AES
 
-app = FastAPI(title="Free Fire Gacha Payload Generator")
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 AES_KEY = bytes([89, 103, 38, 116, 99, 37, 68, 69, 117, 104, 54, 37, 90, 99, 94, 56])
 AES_IV  = bytes([54, 111, 121, 90, 68, 114, 50, 50, 69, 51, 121, 99, 104, 106, 77, 37])
@@ -185,8 +187,6 @@ def get_hosts(region: str) -> List[str]:
     return region_hosts.get(region, ["clientbp.ggpolarbear.com"])
 
 def send_request(endpoint: str, body_bytes: bytes, headers: Dict, hosts: List[str]):
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     for host in hosts:
         url = f"https://{host}{endpoint}"
         headers_copy = headers.copy()
@@ -221,6 +221,15 @@ class GenerateResponse(BaseModel):
     status: str
     region: str
     events: List[GachaEventPayload]
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    load_item_database()
+    thread = threading.Thread(target=self_pinger, daemon=True)
+    thread.start()
+    yield
+
+app = FastAPI(title="Free Fire Gacha Payload Generator", lifespan=lifespan)
 
 @app.post("/generate", response_model=GenerateResponse)
 async def generate_payloads(jwt: str = Query(..., description="JWT token from Free Fire")):
@@ -320,8 +329,7 @@ def self_pinger():
             print(f"Self-ping failed: {e}")
         time.sleep(180)
 
-@app.on_event("startup")
-def startup():
-    load_item_database()
-    thread = threading.Thread(target=self_pinger, daemon=True)
-    thread.start()
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
