@@ -6,12 +6,11 @@ import gzip
 import zlib
 import threading
 import time
-import traceback
 import urllib3
 import requests as http_requests
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -610,7 +609,6 @@ async def frontend():
         }
 
         // Tab switching
-        const tabs = ['Generate', 'Spin', 'Debug'];
         function activateTab(tab) {
             document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
             document.getElementById(`panel${tab}`).classList.remove('hidden');
@@ -630,7 +628,6 @@ async def frontend():
 </body>
 </html>
     """
-    # Sanitize the HTML to remove any invalid surrogate characters
     clean_html = sanitize_html(html_content)
     return HTMLResponse(content=clean_html, media_type="text/html; charset=utf-8")
 
