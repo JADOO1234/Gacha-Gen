@@ -240,7 +240,7 @@ async def lifespan(app: FastAPI):
     thread.start()
     yield
 
-app = FastAPI(title="Free Fire Gacha Tool", lifespan=lifespan)
+app = FastAPI(title="Free Fire Auto Spin Tester", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -252,15 +252,150 @@ app.add_middleware(
 
 @app.post("/generate", response_model=GenerateResponse)
 async def generate_payloads(jwt: str = Query(..., description="JWT token from Free Fire")):
-    # ... (keep same as before, omitted for brevity, but must be included)
-    # For the final code, include the full implementation from previous version.
-    # I'll include it in the final answer.
-    pass
+    try:
+        payload = decode_jwt(jwt)
+        lock_region = payload.get("lock_region", "")
+        if not lock_region:
+            raise HTTPException(status_code=400, detail="lock_region not found in JWT")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JWT: {str(e)}")
+
+    hosts = get_hosts(lock_region)
+    base_headers = {
+        "User-Agent": "UnityPlayer/2022.3.47f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)",
+        "Accept": "*/*",
+        "Accept-Encoding": "deflate, gzip",
+        "X-GA": "v1 1",
+        "ReleaseVersion": "OB53",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Unity-Version": "2022.3.47f1",
+        "Authorization": f"Bearer {jwt}"
+    }
+
+    gacha_desc = fetch_gacha_desc(hosts, base_headers)
+    if not gacha_desc:
+        raise HTTPException(status_code=502, detail="Failed to fetch GachaDesc from game servers")
+
+    events_data = gacha_desc.get(1, [])
+    if not events_data:
+        raise HTTPException(status_code=404, detail="No events found in GachaDesc")
+
+    result_events = []
+    for event in events_data:
+        event_id = event[2][1]
+        raw_name = event[2][6]
+        if isinstance(raw_name, bytes):
+            event_name = raw_name.decode('utf-8', errors='replace')
+        else:
+            event_name = str(raw_name)
+        field3 = event[2][39]
+
+        prize_list = []
+        if 3 in event and 1 in event[3]:
+            prize_list = event[3][1][:3]
+        rare_items = []
+        for i, prize in enumerate(prize_list, 1):
+            item_id = prize.get(1) if isinstance(prize, dict) else None
+            if item_id:
+                rare_items.append(f"{get_item_info(item_id)} (Index: {i})")
+            else:
+                rare_items.append(f"ID ??? (Index: {i})")
+
+        msg = {
+            1: event_id,
+            2: 1,
+            3: field3,
+            4: 1,
+            7: 0,
+            8: False,
+            9: 0,
+            10: 0,
+            11: 0,
+            13: 1
+        }
+        plain = build_payload_from_dict(msg)
+        encrypted = encrypt_packet(plain)
+        encrypted_hex = encrypted.hex().upper()
+
+        result_events.append(GachaEventPayload(
+            event_id=event_id,
+            event_name=event_name,
+            encrypted_hex=encrypted_hex,
+            payload_fields=msg,
+            rare_items=rare_items
+        ))
+
+    return GenerateResponse(status="success", region=lock_region, events=result_events)
 
 @app.post("/spin", response_model=List[SpinResult])
 async def spin_events(jwt: str = Query(..., description="JWT token from Free Fire")):
-    # ... (keep same as before)
-    pass
+    try:
+        payload = decode_jwt(jwt)
+        lock_region = payload.get("lock_region", "")
+        if not lock_region:
+            raise HTTPException(status_code=400, detail="lock_region not found in JWT")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JWT: {str(e)}")
+
+    hosts = get_hosts(lock_region)
+    base_headers = {
+        "User-Agent": "UnityPlayer/2022.3.47f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)",
+        "Accept": "*/*",
+        "Accept-Encoding": "deflate, gzip",
+        "X-GA": "v1 1",
+        "ReleaseVersion": "OB53",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Unity-Version": "2022.3.47f1",
+        "Authorization": f"Bearer {jwt}"
+    }
+
+    gacha_desc = fetch_gacha_desc(hosts, base_headers)
+    if not gacha_desc:
+        raise HTTPException(status_code=502, detail="Failed to fetch GachaDesc from game servers")
+
+    events_data = gacha_desc.get(1, [])
+    if not events_data:
+        raise HTTPException(status_code=404, detail="No events found in GachaDesc")
+
+    results = []
+    for event in events_data:
+        event_id = event[2][1]
+        raw_name = event[2][6]
+        if isinstance(raw_name, bytes):
+            event_name = raw_name.decode('utf-8', errors='replace')
+        else:
+            event_name = str(raw_name)
+        field3 = event[2][39]
+
+        msg = {
+            1: event_id,
+            2: 1,
+            3: field3,
+            4: 1,
+            7: 0,
+            8: False,
+            9: 0,
+            10: 0,
+            11: 0,
+            13: 1
+        }
+        plain = build_payload_from_dict(msg)
+        encrypted = encrypt_packet(plain)
+        encrypted_hex = encrypted.hex().upper()
+
+        status_code, decoded, _ = send_request("/PurchaseGacha", encrypted, base_headers, hosts)
+        is_free = (status_code == 200)
+
+        results.append(SpinResult(
+            event_id=event_id,
+            event_name=event_name,
+            status_code=status_code if status_code is not None else 0,
+            is_free=is_free,
+            encrypted_hex=encrypted_hex,
+            decoded_response=decoded
+        ))
+
+    return results
 
 def sanitize_html(html: str) -> str:
     return html.encode('utf-8', errors='ignore').decode('utf-8')
