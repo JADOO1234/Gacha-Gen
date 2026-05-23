@@ -250,7 +250,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.post("/generate", response_model=GenerateResponse)
+@app.api_route("/generate", methods=["GET", "POST"], response_model=GenerateResponse)
 async def generate_payloads(jwt: str = Query(..., description="JWT token from Free Fire")):
     try:
         payload = decode_jwt(jwt)
@@ -327,7 +327,7 @@ async def generate_payloads(jwt: str = Query(..., description="JWT token from Fr
 
     return GenerateResponse(status="success", region=lock_region, events=result_events)
 
-@app.post("/spin", response_model=List[SpinResult])
+@app.api_route("/spin", methods=["GET", "POST"], response_model=List[SpinResult])
 async def spin_events(jwt: str = Query(..., description="JWT token from Free Fire")):
     try:
         payload = decode_jwt(jwt)
@@ -396,6 +396,14 @@ async def spin_events(jwt: str = Query(..., description="JWT token from Free Fir
         ))
 
     return results
+
+@app.get("/eren")
+async def eren_check(Eren: str = Query(..., description="Secret key")):
+    SECRET_KEY = "ErenYeager"   # Change this to your desired key
+    if Eren == SECRET_KEY:
+        return {"status": "success", "message": "Access granted. You can now use /generate and /spin with GET or POST."}
+    else:
+        raise HTTPException(status_code=403, detail="Invalid key")
 
 def sanitize_html(html: str) -> str:
     return html.encode('utf-8', errors='ignore').decode('utf-8')
